@@ -9,6 +9,8 @@ namespace ContentAPI.Context
 {
     public class ContentContext : DbContext
     {
+        private const string _queueName = "ContentAPIAuditLogCreated";
+
         private readonly IMessageBus _messageBus;
         public ContentContext(DbContextOptions options, IMessageBus messageBus) : base(options)
         {
@@ -44,16 +46,15 @@ namespace ContentAPI.Context
                     if (property.Metadata.IsPrimaryKey())
                         auditEntry.KeyValues[propertyName] = property.CurrentValue;
 
-                    var currentValue = property.CurrentValue;
-                    var originalValue = entity.GetDatabaseValues().GetValue<object>(propertyName);
-                    if (currentValue != originalValue)
+                    if (property.IsModified)
                     {
+                        auditEntry.ChangedColumns.Add(propertyName);
                         auditEntry.NewValues[propertyName] = property.CurrentValue;
                         auditEntry.OldValues[propertyName] = entity.GetDatabaseValues().GetValue<object>(propertyName);
                     }
                 }
 
-                _messageBus.Send(auditEntry.ToAudit(), "ContentAPIAuditLogCreated");
+                _messageBus.Send(auditEntry.ToAudit(), _queueName);
             }
 
             foreach (var entity in deletedEntries)
@@ -70,12 +71,12 @@ namespace ContentAPI.Context
                     var propertyName = property.Metadata.Name;
 
                     if (property.Metadata.IsPrimaryKey())
-                        auditEntry.KeyValues[propertyName] = property.CurrentValue;
+                        auditEntry.KeyValues[propertyName] = property.OriginalValue;
 
                     auditEntry.OldValues[propertyName] = property.OriginalValue;
                 }
 
-                _messageBus.Send(auditEntry.ToAudit(), "ContentAPIAuditLogCreated");
+                _messageBus.Send(auditEntry.ToAudit(), _queueName);
             }
 
             int record = base.SaveChanges();
@@ -99,7 +100,7 @@ namespace ContentAPI.Context
                     auditEntry.NewValues[propertyName] = property.CurrentValue;
                 }
 
-                _messageBus.Send(auditEntry.ToAudit(), "ContentAPIAuditLogCreated");
+                _messageBus.Send(auditEntry.ToAudit(), _queueName);
             }
 
             return record;

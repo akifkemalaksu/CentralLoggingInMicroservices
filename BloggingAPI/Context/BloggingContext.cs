@@ -10,6 +10,8 @@ namespace BloggingAPI.Context
 {
     public class BloggingContext : DbContext
     {
+        private const string _queueName = "BloggingAPIAuditLogCreated";
+
         private readonly IMessageBus _messageBus;
         public BloggingContext(DbContextOptions options, IMessageBus messageBus) : base(options)
         {
@@ -47,17 +49,35 @@ namespace BloggingAPI.Context
 
                     if (property.IsModified)
                     {
-                        var currentValue = property.CurrentValue;
-                        var originalValue = entity.GetDatabaseValues().GetValue<object>(propertyName);
-                        if (currentValue != originalValue)
-                        {
-                            auditEntry.NewValues[propertyName] = property.CurrentValue;
-                            auditEntry.OldValues[propertyName] = entity.GetDatabaseValues().GetValue<object>(propertyName);
-                        }
+                        auditEntry.ChangedColumns.Add(propertyName);
+                        auditEntry.NewValues[propertyName] = property.CurrentValue;
+                        auditEntry.OldValues[propertyName] = entity.GetDatabaseValues().GetValue<object>(propertyName);
                     }
                 }
 
-                _messageBus.Send(auditEntry.ToAudit(), "BloggingAPIAuditLogCreated");
+                _messageBus.Send(auditEntry.ToAudit(), _queueName);
+            }
+
+            foreach (var entity in deletedEntries)
+            {
+                var auditEntry = new AuditEntry()
+                {
+                    TableName = entity.Entity.GetType().GetCustomAttributes<TableAttribute>().Single().Name,
+                    UserId = userId.ToString(),
+                    Type = EntityState.Deleted.ToString()
+                };
+
+                foreach (var property in entity.Properties)
+                {
+                    var propertyName = property.Metadata.Name;
+
+                    if (property.Metadata.IsPrimaryKey())
+                        auditEntry.KeyValues[propertyName] = property.OriginalValue;
+
+                    auditEntry.OldValues[propertyName] = property.OriginalValue;
+                }
+
+                _messageBus.Send(auditEntry.ToAudit(), _queueName);
             }
 
             int record = base.SaveChanges();
@@ -81,29 +101,7 @@ namespace BloggingAPI.Context
                     auditEntry.NewValues[propertyName] = property.CurrentValue;
                 }
 
-                _messageBus.Send(auditEntry.ToAudit(), "BloggingAPIAuditLogCreated");
-            }
-
-            foreach (var entity in deletedEntries)
-            {
-                var auditEntry = new AuditEntry()
-                {
-                    TableName = entity.Entity.GetType().GetCustomAttributes<TableAttribute>().Single().Name,
-                    UserId = userId.ToString(),
-                    Type = EntityState.Deleted.ToString()
-                };
-
-                foreach (var property in entity.Properties)
-                {
-                    var propertyName = property.Metadata.Name;
-
-                    if (property.Metadata.IsPrimaryKey())
-                        auditEntry.KeyValues[propertyName] = property.CurrentValue;
-
-                    auditEntry.OldValues[propertyName] = property.OriginalValue;
-                }
-
-                _messageBus.Send(auditEntry.ToAudit(), "BloggingAPIAuditLogCreated");
+                _messageBus.Send(auditEntry.ToAudit(), _queueName);
             }
 
             return record;
